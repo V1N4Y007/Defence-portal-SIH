@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,13 +25,26 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
+  X,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+
+interface UploadedFile {
+  name: string;
+  type: string;
+  size: number;
+  url: string;
+  category: string;
+}
 
 const ReportIncident = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [category, setCategory] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<any>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const categories = [
     "Phishing",
@@ -44,9 +57,46 @@ const ReportIncident = () => {
     "Other Cyber Threat",
   ];
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, category: string) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const newFile: UploadedFile = {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          url: event.target?.result as string,
+          category,
+        };
+        setUploadedFiles((prev) => [...prev, newFile]);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    toast({
+      title: "Evidence uploaded",
+      description: `${files.length} file(s) added successfully`,
+    });
+  };
+
+  const removeFile = (index: number) => {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const handleAnalyze = () => {
+    if (uploadedFiles.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Evidence Required",
+        description: "Please upload at least one piece of evidence before analysis",
+      });
+      return;
+    }
+
     setAnalyzing(true);
-    // Simulate AI analysis
     setTimeout(() => {
       setAnalysisResult({
         status: "MALICIOUS",
@@ -120,33 +170,131 @@ const ReportIncident = () => {
 
                 {/* Evidence Upload */}
                 <div className="space-y-3">
-                  <Label>Upload Evidence (Optional)</Label>
+                  <Label className="text-destructive">Upload Evidence (Required *)</Label>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e, "general")}
+                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt"
+                  />
                   <div className="grid grid-cols-2 gap-2">
-                    <Button variant="outline" className="gap-2 justify-start">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 justify-start"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
                       <FileText className="w-4 h-4" />
                       Text / SMS
                     </Button>
-                    <Button variant="outline" className="gap-2 justify-start">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 justify-start"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
                       <LinkIcon className="w-4 h-4" />
                       URL / Link
                     </Button>
-                    <Button variant="outline" className="gap-2 justify-start">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 justify-start"
+                      onClick={() => {
+                        const input = document.createElement("input");
+                        input.type = "file";
+                        input.accept = "image/*";
+                        input.multiple = true;
+                        input.onchange = (e) => handleFileUpload(e as any, "screenshot");
+                        input.click();
+                      }}
+                    >
                       <ImageIcon className="w-4 h-4" />
                       Screenshot
                     </Button>
-                    <Button variant="outline" className="gap-2 justify-start">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 justify-start"
+                      onClick={() => {
+                        const input = document.createElement("input");
+                        input.type = "file";
+                        input.accept = "video/*";
+                        input.multiple = true;
+                        input.onchange = (e) => handleFileUpload(e as any, "video");
+                        input.click();
+                      }}
+                    >
                       <Video className="w-4 h-4" />
                       Video
                     </Button>
-                    <Button variant="outline" className="gap-2 justify-start">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 justify-start"
+                      onClick={() => {
+                        const input = document.createElement("input");
+                        input.type = "file";
+                        input.accept = "audio/*";
+                        input.multiple = true;
+                        input.onchange = (e) => handleFileUpload(e as any, "audio");
+                        input.click();
+                      }}
+                    >
                       <Mic className="w-4 h-4" />
                       Audio
                     </Button>
-                    <Button variant="outline" className="gap-2 justify-start">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 justify-start"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
                       <Upload className="w-4 h-4" />
                       File Upload
                     </Button>
                   </div>
+
+                  {/* Uploaded Files Display */}
+                  {uploadedFiles.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                      <Label>Uploaded Evidence ({uploadedFiles.length})</Label>
+                      <div className="space-y-2">
+                        {uploadedFiles.map((file, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border"
+                          >
+                            {file.type.startsWith("image/") ? (
+                              <img
+                                src={file.url}
+                                alt={file.name}
+                                className="w-12 h-12 object-cover rounded"
+                              />
+                            ) : (
+                              <FileText className="w-12 h-12 text-muted-foreground" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{file.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(file.size / 1024).toFixed(2)} KB • {file.category}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removeFile(index)}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Action Buttons */}
