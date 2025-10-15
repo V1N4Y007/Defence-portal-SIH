@@ -202,6 +202,76 @@ export const apiService = {
       return true;
     }
     return false;
+  },
+
+  // Assign incident to analyst
+  async assignIncident(id: string, analyst: string, notes?: string): Promise<boolean> {
+    await delay(800);
+    const incident = mockIncidents.find(i => i.id === id);
+    if (incident) {
+      incident.assignedAnalyst = analyst;
+      incident.status = "Under Review";
+      if (notes) {
+        incident.notes = notes;
+      }
+      return true;
+    }
+    return false;
+  },
+
+  // Start investigation
+  async startInvestigation(id: string, notes?: string): Promise<boolean> {
+    await delay(600);
+    const incident = mockIncidents.find(i => i.id === id);
+    if (incident) {
+      incident.status = "Investigating";
+      if (notes) {
+        incident.notes = incident.notes ? `${incident.notes}\n\n${notes}` : notes;
+      }
+      return true;
+    }
+    return false;
+  },
+
+  // Get analyst incidents (for analyst dashboard)
+  async getAnalystIncidents(): Promise<{ incidents: ApiIncident[]; stats: any }> {
+    await delay(1000);
+    
+    const analystIncidents = [
+      ...mockIncidents,
+      {
+        id: "INC-2024-005",
+        category: "Unauthorized Access",
+        status: "Pending" as const,
+        date: "2024-01-11",
+        time: "22:30",
+        submittedBy: "Sgt. ****",
+        risk: "High" as const,
+        description: "Multiple failed login attempts detected on secure system. Potential brute force attack.",
+        evidence: [
+          { name: "login_logs.txt", type: "text", url: "/evidence/login_logs.txt" },
+          { name: "network_traffic.pcap", type: "file", url: "/evidence/network_traffic.pcap" },
+        ],
+        playbook: [
+          "Analyze login attempt patterns",
+          "Check for compromised credentials",
+          "Implement account lockout policies",
+          "Monitor for lateral movement"
+        ]
+      }
+    ];
+    
+    const analystStats = {
+      critical: analystIncidents.filter(i => i.risk === "Critical").length,
+      high: analystIncidents.filter(i => i.risk === "High").length,
+      today: analystIncidents.filter(i => i.date === "2024-01-15").length,
+      activeUsers: 1247
+    };
+    
+    return {
+      incidents: analystIncidents,
+      stats: analystStats
+    };
   }
 };
 
@@ -224,6 +294,36 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   if (url.startsWith('/api/complaints') && init?.method === 'POST') {
     const data = await apiService.submitIncident(init.body as FormData);
     return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  if (url.startsWith('/api/analyst/incidents')) {
+    const data = await apiService.getAnalystIncidents();
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  if (url.includes('/assign') && init?.method === 'POST') {
+    const body = await (init.body as any)?.text();
+    const { analyst, notes } = JSON.parse(body || '{}');
+    const incidentId = url.split('/')[3]; // Extract ID from URL
+    const success = await apiService.assignIncident(incidentId, analyst, notes);
+    return new Response(JSON.stringify({ success }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  if (url.includes('/investigate') && init?.method === 'POST') {
+    const body = await (init.body as any)?.text();
+    const { notes } = JSON.parse(body || '{}');
+    const incidentId = url.split('/')[3]; // Extract ID from URL
+    const success = await apiService.startInvestigation(incidentId, notes);
+    return new Response(JSON.stringify({ success }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
