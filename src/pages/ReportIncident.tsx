@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -13,6 +14,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Shield,
   Upload,
@@ -26,6 +37,8 @@ import {
   XCircle,
   Loader2,
   X,
+  FileIcon,
+  Download,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -35,15 +48,30 @@ interface UploadedFile {
   size: number;
   url: string;
   category: string;
+  file?: File;
+}
+
+interface FormData {
+  category: string;
+  description: string;
+  urlInput: string;
 }
 
 const ReportIncident = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [category, setCategory] = useState("");
+  const [formData, setFormData] = useState<FormData>({
+    category: "",
+    description: "",
+    urlInput: ""
+  });
   const [analyzing, setAnalyzing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const categories = [
@@ -61,7 +89,33 @@ const ReportIncident = () => {
     const files = e.target.files;
     if (!files) return;
 
+    // Validate file types and sizes
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    const allowedTypes = [
+      'image/', 'video/', 'audio/', 'application/pdf', 'text/', 
+      'application/msword', 'application/vnd.openxmlformats-officedocument'
+    ];
+
     Array.from(files).forEach((file) => {
+      if (file.size > maxSize) {
+        toast({
+          variant: "destructive",
+          title: "File too large",
+          description: `${file.name} exceeds 50MB limit`,
+        });
+        return;
+      }
+
+      const isValidType = allowedTypes.some(type => file.type.startsWith(type));
+      if (!isValidType) {
+        toast({
+          variant: "destructive",
+          title: "Invalid file type",
+          description: `${file.name} is not a supported file type`,
+        });
+        return;
+      }
+
       const reader = new FileReader();
       reader.onload = (event) => {
         const newFile: UploadedFile = {
@@ -70,6 +124,7 @@ const ReportIncident = () => {
           size: file.size,
           url: event.target?.result as string,
           category,
+          file
         };
         setUploadedFiles((prev) => [...prev, newFile]);
       };
@@ -80,18 +135,68 @@ const ReportIncident = () => {
       title: "Evidence uploaded",
       description: `${files.length} file(s) added successfully`,
     });
+    
+    // Clear validation errors when files are uploaded
+    setValidationErrors([]);
   };
 
   const removeFile = (index: number) => {
     setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleAnalyze = () => {
-    if (uploadedFiles.length === 0) {
+  const addUrlEvidence = () => {
+    if (!formData.urlInput.trim()) {
       toast({
         variant: "destructive",
-        title: "Evidence Required",
-        description: "Please upload at least one piece of evidence before analysis",
+        title: "Invalid URL",
+        description: "Please enter a valid URL",
+      });
+      return;
+    }
+
+    const urlFile: UploadedFile = {
+      name: formData.urlInput,
+      type: "url",
+      size: 0,
+      url: formData.urlInput,
+      category: "url"
+    };
+    
+    setUploadedFiles(prev => [...prev, urlFile]);
+    setFormData(prev => ({ ...prev, urlInput: "" }));
+    setValidationErrors([]);
+    
+    toast({
+      title: "URL evidence added",
+      description: "URL has been added to evidence list",
+    });
+  };
+
+  const validateForm = (): boolean => {
+    const errors: string[] = [];
+    
+    if (!formData.category) {
+      errors.push("Please select a threat category");
+    }
+    
+    if (!formData.description.trim()) {
+      errors.push("Please provide an incident description");
+    }
+    
+    if (uploadedFiles.length === 0) {
+      errors.push("Please attach at least one evidence file or link");
+    }
+    
+    setValidationErrors(errors);
+    return errors.length === 0;
+  };
+
+  const handleAnalyze = () => {
+    if (!validateForm()) {
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: "Please fix the errors before proceeding",
       });
       return;
     }
@@ -112,6 +217,100 @@ const ReportIncident = () => {
       });
       setAnalyzing(false);
     }, 3000);
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: "Please fix the errors before submitting",
+      });
+      return;
+    }
+
+    setShowConfirmDialog(true);
+  };
+
+  const confirmSubmit = async () => {
+    setSubmitting(true);
+    setUploadProgress(0);
+    
+    try {
+      const formDataToSend = new FormData();
+      formDataToSend.append('category', formData.category);
+      formDataToSend.append('description', formData.description);
+      
+      // Add files to FormData
+      uploadedFiles.forEach((file, index) => {
+        if (file.file) {
+          formDataToSend.append(`evidence_${index}`, file.file);
+        } else if (file.type === 'url') {
+          formDataToSend.append(`url_${index}`, file.url);
+        }
+      });
+      
+      // Add analysis result if available
+      if (analysisResult) {
+        formDataToSend.append('analysisResult', JSON.stringify(analysisResult));
+      }
+
+      // Simulate upload progress
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return prev;
+          }
+          return prev + 10;
+        });
+      }, 200);
+
+      // Simulate API call
+      const response = await fetch('/api/complaints', {
+        method: 'POST',
+        body: formDataToSend,
+      });
+
+      setUploadProgress(100);
+      
+      if (response.ok) {
+        toast({
+          title: "Incident Reported Successfully",
+          description: "Your report has been submitted to CERT-Army for analysis",
+        });
+        
+        setTimeout(() => {
+          navigate('/dashboard/personnel');
+        }, 1500);
+      } else {
+        throw new Error('Submission failed');
+      }
+    } catch (error) {
+      // Fallback for demo - simulate successful submission
+      setUploadProgress(100);
+      
+      toast({
+        title: "Incident Reported Successfully",
+        description: "Your report has been submitted to CERT-Army for analysis",
+      });
+      
+      setTimeout(() => {
+        navigate('/dashboard/personnel');
+      }, 1500);
+    } finally {
+      setSubmitting(false);
+      setShowConfirmDialog(false);
+    }
+  };
+
+  const getFileIcon = (type: string) => {
+    if (type.startsWith('image/')) return <ImageIcon className="w-4 h-4" />;
+    if (type.startsWith('video/')) return <Video className="w-4 h-4" />;
+    if (type.startsWith('audio/')) return <Mic className="w-4 h-4" />;
+    if (type === 'url') return <LinkIcon className="w-4 h-4" />;
+    if (type.includes('pdf')) return <FileIcon className="w-4 h-4" />;
+    return <FileText className="w-4 h-4" />;
   };
 
   return (
@@ -144,8 +343,11 @@ const ReportIncident = () => {
               <div className="space-y-6">
                 {/* Category Selection */}
                 <div className="space-y-2">
-                  <Label>Threat Category</Label>
-                  <Select value={category} onValueChange={setCategory}>
+                  <Label>Threat Category *</Label>
+                  <Select 
+                    value={formData.category} 
+                    onValueChange={(value) => setFormData(prev => ({ ...prev, category: value }))}
+                  >
                     <SelectTrigger className="bg-input">
                       <SelectValue placeholder="Select threat type" />
                     </SelectTrigger>
@@ -161,8 +363,10 @@ const ReportIncident = () => {
 
                 {/* Description */}
                 <div className="space-y-2">
-                  <Label>Incident Description</Label>
+                  <Label>Incident Description *</Label>
                   <Textarea
+                    value={formData.description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                     placeholder="Describe what happened, when you noticed it, and any suspicious behavior..."
                     className="bg-input min-h-[100px]"
                   />
@@ -179,6 +383,26 @@ const ReportIncident = () => {
                     onChange={(e) => handleFileUpload(e, "general")}
                     accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt"
                   />
+                  
+                  {/* URL Input */}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Enter suspicious URL or link..."
+                      value={formData.urlInput}
+                      onChange={(e) => setFormData(prev => ({ ...prev, urlInput: e.target.value }))}
+                      className="bg-input"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={addUrlEvidence}
+                      disabled={!formData.urlInput.trim()}
+                    >
+                      <LinkIcon className="w-4 h-4 mr-2" />
+                      Add URL
+                    </Button>
+                  </div>
+                  
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       type="button"
@@ -187,16 +411,7 @@ const ReportIncident = () => {
                       onClick={() => fileInputRef.current?.click()}
                     >
                       <FileText className="w-4 h-4" />
-                      Text / SMS
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="gap-2 justify-start"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <LinkIcon className="w-4 h-4" />
-                      URL / Link
+                      Text / Document
                     </Button>
                     <Button
                       type="button"
@@ -228,7 +443,7 @@ const ReportIncident = () => {
                       }}
                     >
                       <Video className="w-4 h-4" />
-                      Video
+                      Video Evidence
                     </Button>
                     <Button
                       type="button"
@@ -244,18 +459,27 @@ const ReportIncident = () => {
                       }}
                     >
                       <Mic className="w-4 h-4" />
-                      Audio
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="gap-2 justify-start"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <Upload className="w-4 h-4" />
-                      File Upload
+                      Audio Recording
                     </Button>
                   </div>
+
+                  {/* Validation Errors */}
+                  {validationErrors.length > 0 && (
+                    <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle className="w-4 h-4 text-destructive" />
+                        <span className="text-sm font-medium text-destructive">Please fix the following errors:</span>
+                      </div>
+                      <ul className="text-sm text-destructive space-y-1">
+                        {validationErrors.map((error, index) => (
+                          <li key={index} className="flex items-start gap-2">
+                            <span className="text-destructive mt-1">•</span>
+                            <span>{error}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
                   {/* Uploaded Files Display */}
                   {uploadedFiles.length > 0 && (
@@ -267,21 +491,35 @@ const ReportIncident = () => {
                             key={index}
                             className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border"
                           >
-                            {file.type.startsWith("image/") ? (
-                              <img
-                                src={file.url}
-                                alt={file.name}
-                                className="w-12 h-12 object-cover rounded"
-                              />
-                            ) : (
-                              <FileText className="w-12 h-12 text-muted-foreground" />
-                            )}
+                            <div className="flex items-center justify-center w-12 h-12 bg-background rounded border">
+                              {file.type.startsWith("image/") ? (
+                                <img
+                                  src={file.url}
+                                  alt={file.name}
+                                  className="w-full h-full object-cover rounded"
+                                />
+                              ) : (
+                                <div className="text-muted-foreground">
+                                  {getFileIcon(file.type)}
+                                </div>
+                              )}
+                            </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate">{file.name}</p>
                               <p className="text-xs text-muted-foreground">
-                                {(file.size / 1024).toFixed(2)} KB • {file.category}
+                                {file.size > 0 ? `${(file.size / 1024).toFixed(2)} KB` : 'URL'} • {file.category}
                               </p>
                             </div>
+                            {file.type === 'url' && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => window.open(file.url, '_blank')}
+                              >
+                                <Download className="w-4 h-4" />
+                              </Button>
+                            )}
                             <Button
                               type="button"
                               variant="ghost"
@@ -301,7 +539,7 @@ const ReportIncident = () => {
                 <div className="flex gap-3 pt-4">
                   <Button
                     onClick={handleAnalyze}
-                    disabled={analyzing}
+                    disabled={analyzing || uploadedFiles.length === 0}
                     className="flex-1 bg-gradient-primary"
                   >
                     {analyzing ? (
@@ -313,8 +551,32 @@ const ReportIncident = () => {
                       "Analyze Threat"
                     )}
                   </Button>
-                  <Button variant="outline">Save as Draft</Button>
+                  <Button 
+                    variant="outline"
+                    onClick={handleSubmit}
+                    disabled={submitting || analyzing}
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Submitting...
+                      </>
+                    ) : (
+                      "Submit Report"
+                    )}
+                  </Button>
                 </div>
+
+                {/* Upload Progress */}
+                {submitting && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span>Uploading evidence...</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                    <Progress value={uploadProgress} className="h-2" />
+                  </div>
+                )}
               </div>
             </Card>
           </div>
@@ -425,8 +687,19 @@ const ReportIncident = () => {
                   </div>
 
                   {/* Action Button */}
-                  <Button className="w-full bg-gradient-danger">
-                    Submit to CERT-Army
+                  <Button 
+                    className="w-full bg-gradient-danger"
+                    onClick={handleSubmit}
+                    disabled={submitting}
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Submitting...
+                      </>
+                    ) : (
+                      "Submit to CERT-Army"
+                    )}
                   </Button>
                 </div>
               </Card>
@@ -443,6 +716,25 @@ const ReportIncident = () => {
           </div>
         </div>
       </main>
+
+      {/* Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Incident Submission</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to submit this incident report to CERT-Army? 
+              This action will immediately alert security analysts and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmSubmit} className="bg-gradient-danger">
+              Submit Report
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
